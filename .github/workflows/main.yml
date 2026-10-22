@@ -1,0 +1,96 @@
+name: Kittygram Workflow
+
+on:
+  push:
+    branches:
+      - main  # Запускать сценарий только при пуше в ветку main
+
+jobs:
+  # 1. Проверка стиля кода и запуск тестов
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+          cd backend/
+          pip install -r requirements.txt
+
+      - name: Linter check (ruff)
+        run: ruff check backend/  # Проверка кода бэкенда с помощью ruff
+
+      - name: Run backend tests
+        run: |
+          cd backend/
+          python manage.py test  # Запуск тестов бэкенда
+
+      - name: Run frontend tests
+        run: |
+          cd frontend/
+          npm ci
+          npm test -- --watchAll=false  # Запуск тестов фронтенда в неинтерактивном режиме
+
+  # 2. Сборка и отправка образов на Docker Hub (выполняется только если тесты прошли)
+  build_and_push_to_docker_hub:
+    name: Push Docker image to Docker Hub
+    runs-on: ubuntu-latest
+    needs: tests  # Ждем успешного завершения тестов
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: actions/setup-docker-action@v1
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Собираем и отправляем бэкенд
+      - name: Push backend to Docker Hub
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend/
+          push: true
+          tags: darkgoblin228/kittygram_backend:latest
+
+      # Собираем и отправляем фронтенд
+      - name: Push frontend to Docker Hub
+        uses: docker/build-push-action@v4
+        with:
+          context: ./frontend/
+          push: true
+          tags: darkgoblin228/kittygram_frontend:latest
+
+      # Собираем и отправляем Nginx (gateway)
+      - name: Push gateway to Docker Hub
+        uses: docker/build-push-action@v4
+        with:
+          context: ./nginx/
+          push: true
+          tags: darkgoblin228/kittygram_gateway:latest
+
+  # 3. Отправка уведомления в Telegram
+  send_message:
+    runs-on: ubuntu-latest
+    needs: build_and_push_to_docker_hub
+    steps:
+      - name: Send message
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_TO }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          message: |
+            Проект Kittygram успешно прошел тесты и деплой!
+            Все образы обновлены на Docker Hub.

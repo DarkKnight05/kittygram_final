@@ -1,27 +1,44 @@
-version: '3'
+version: '3.8'
 
+# Объявляем "виртуальные флешки" (volumes), о которых просили в ТЗ для хранения данных
 volumes:
-  pg_data:
-  static:
+  pg_data:      # Тут будут лежать данные базы данных PostgreSQL
+  static:       # Тут будет лежать статика (стили, скрипты) бэкенда и фронтенда
+  media:        # Тут будут лежать загруженные пользователями картинки котиков
 
 services:
+  # 1. Контейнер базы данных PostgreSQL
   db:
     image: postgres:13
+    env_file: .env               # Подключаем созданный нами файл .env с паролями
     volumes:
       - pg_data:/var/lib/postgresql/data
+
+  # 2. Контейнер бэкенда (Django-приложение)
   backend:
-    build: ./backend/
-    env_file: .env
+    build: ./backend/            # Docker сам соберет образ по Dockerfile в папке backend
+    env_file: .env               # Тоже передаем ему настройки и секреты из .env
+    depends_on:
+      - db                       # Бэкенд не запустится, пока не поднимется база данных
+    volumes:
+      - static:/app/static/      # Связываем папку статики бэкенда с общим volume
+      - media:/app/media/        # Связываем папку медиа бэкенда с общим volume
+
+  # 3. Контейнер фронтенда (React-приложение)
   frontend:
+    build: ./frontend/           # Собираем фронтенд по готовому Dockerfile из папки frontend
     env_file: .env
-    build: ./frontend/
-    command: cp -r /app/build/. /static/
     volumes:
-      - static:/static
+      - static:/app/build/      # Фронтенд отдаст свою собранную статику в общий volume
+
+  # 4. Контейнер-шлюз Gateway (Nginx)
   gateway:
-    build: ./nginx/
-    env_file: .env
+    build: ./nginx/              # Собираем Nginx по готовому Dockerfile из папки nginx
     ports:
-      - 9000:80
+      - "80:80"                  # Пробрасываем 80-й порт (стандартный веб-порт) наружу
     volumes:
-      - static:/static
+      - static:/usr/share/nginx/html/  # Nginx забирает статику и фронтенд для раздачи
+      - media:/var/html/media/         # Nginx забирает картинки котиков для раздачи
+    depends_on:
+      - backend
+      - frontend
